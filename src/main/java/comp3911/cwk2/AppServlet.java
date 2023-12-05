@@ -24,7 +24,7 @@ import freemarker.template.TemplateExceptionHandler;
 
 @SuppressWarnings("serial")
 public class AppServlet extends HttpServlet {
-
+  private final BruteForceBlock bruteForceBlock = new BruteForceBlock();
   private static final String CONNECTION_URL = "jdbc:sqlite:db.sqlite3";
   private static final String AUTH_QUERY = "select * from user where username='%s' and password='%s'";
   private static final String SEARCH_QUERY = "select * from patient where surname='%s' collate nocase";
@@ -83,7 +83,15 @@ public class AppServlet extends HttpServlet {
     String surname = request.getParameter("surname");
 
     try {
-      if (authenticated(username, password)) {
+      if(bruteForceBlock.isAccountLocked(username)) {
+        Template template = fm.getTemplate("locked.html");
+        template.process(null, response.getWriter());
+        response.setContentType("text/html");
+        response.setStatus(HttpServletResponse.SC_OK);
+        return;
+      }
+      else if (authenticated(username, password)) {
+        bruteForceBlock.handleSuccessfulLogin(username);
         // Get search results and merge with template
         Map<String, Object> model = new HashMap<>();
         model.put("records", searchResults(surname));
@@ -91,6 +99,7 @@ public class AppServlet extends HttpServlet {
         template.process(model, response.getWriter());
       }
       else {
+        bruteForceBlock.handleFailedLogin(username);
         Template template = fm.getTemplate("invalid.html");
         template.process(null, response.getWriter());
       }
