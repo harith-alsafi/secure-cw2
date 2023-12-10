@@ -129,7 +129,6 @@ public class AppServlet extends HttpServlet {
 
   private boolean authenticated(String username, String password) throws SQLException, DigestException {
     String hashedPassword = hash(password);
-    System.out.println(hashedPassword);
     PreparedStatement statement = database.prepareStatement(AUTH_QUERY);
     statement.setString(1, username);
     statement.setString(2, hashedPassword);
