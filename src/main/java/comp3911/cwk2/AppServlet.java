@@ -2,16 +2,8 @@ package comp3911.cwk2;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.security.DigestException;
-import java.security.MessageDigest;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,17 +21,14 @@ import freemarker.template.TemplateExceptionHandler;
 @SuppressWarnings("serial")
 public class AppServlet extends HttpServlet {
   private final BruteForceBlock bruteForceBlock = new BruteForceBlock();
-  private static final String CONNECTION_URL = "jdbc:sqlite:db.sqlite3";
-  private static final String AUTH_QUERY = "select * from user where username=? and password=?";
-  private static final String SEARCH_QUERY = "select * from patient where surname=? collate nocase";
+  private ProtectedSqlDatabase protectedDatabase = new ProtectedSqlDatabase();
 
   private final Configuration fm = new Configuration(Configuration.VERSION_2_3_28);
-  private Connection database;
 
   @Override
   public void init() throws ServletException {
     configureTemplateEngine();
-    connectToDatabase();
+    protectedDatabase.connectToDatabase();
   }
 
   private void configureTemplateEngine() throws ServletException {
@@ -54,29 +43,13 @@ public class AppServlet extends HttpServlet {
     }
   }
 
-  private void connectToDatabase() throws ServletException {
+  private boolean isAuthenticated(String username, String password) {
+    String hashedPassword;
     try {
-      database = DriverManager.getConnection(CONNECTION_URL);
-    } catch (SQLException error) {
-      throw new ServletException(error.getMessage());
-    }
-  }
-
-  private String hash(String password) throws DigestException {
-    try {
-      MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      byte[] encodedhash = digest.digest(password.getBytes(StandardCharsets.UTF_8));
-      StringBuilder hexString = new StringBuilder(2 * encodedhash.length);
-      for (int i = 0; i < encodedhash.length; i++) {
-        String hex = Integer.toHexString(0xff & encodedhash[i]);
-        if (hex.length() == 1) {
-          hexString.append('0');
-        }
-        hexString.append(hex);
-      }
-      return hexString.toString();
-    } catch (Exception e) {
-      throw new DigestException();
+      hashedPassword = PasswordHashing.hash(password);
+      return protectedDatabase.isAuthenticated(username, hashedPassword);
+    } catch (DigestException e) {
+      return false;
     }
   }
 
@@ -108,11 +81,11 @@ public class AppServlet extends HttpServlet {
         response.setContentType("text/html");
         response.setStatus(HttpServletResponse.SC_OK);
         return;
-      } else if (authenticated(username, password)) {
+      } else if (isAuthenticated(username, password)) {
         bruteForceBlock.handleSuccessfulLogin(username);
         // Get search results and merge with template
         Map<String, Object> model = new HashMap<>();
-        model.put("records", searchResults(surname));
+        model.put("records", protectedDatabase.searchResults(surname));
         Template template = fm.getTemplate("details.html");
         template.process(model, response.getWriter());
       } else {
@@ -125,34 +98,5 @@ public class AppServlet extends HttpServlet {
     } catch (Exception error) {
       response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
     }
-  }
-
-  private boolean authenticated(String username, String password) throws SQLException, DigestException {
-    String hashedPassword = hash(password);
-    PreparedStatement statement = database.prepareStatement(AUTH_QUERY);
-    statement.setString(1, username);
-    statement.setString(2, hashedPassword);
-
-    ResultSet results = statement.executeQuery();
-    return results.next();
-  }
-
-  private List<Record> searchResults(String surname) throws SQLException {
-    List<Record> records = new ArrayList<>();
-    PreparedStatement statement = database.prepareStatement(SEARCH_QUERY);
-    statement.setString(1, surname);
-    ResultSet results = statement.executeQuery();
-    while (results.next()) {
-      Record rec = new Record();
-      rec.setSurname(results.getString(2));
-      rec.setForename(results.getString(3));
-      rec.setAddress(results.getString(4));
-      rec.setDateOfBirth(results.getString(5));
-      rec.setDoctorId(results.getString(6));
-      rec.setDiagnosis(results.getString(7));
-      records.add(rec);
-    }
-
-    return records;
   }
 }
