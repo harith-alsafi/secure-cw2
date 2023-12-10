@@ -2,8 +2,12 @@ package comp3911.cwk2;
 
 import java.io.File;
 import java.io.IOException;
-import java.security.DigestException;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,15 +24,18 @@ import freemarker.template.TemplateExceptionHandler;
 
 @SuppressWarnings("serial")
 public class AppServlet extends HttpServlet {
-  private final BruteForceBlock bruteForceBlock = new BruteForceBlock();
-  private ProtectedSqlDatabase protectedDatabase = new ProtectedSqlDatabase();
+
+  private static final String CONNECTION_URL = "jdbc:sqlite:db.sqlite3";
+  private static final String AUTH_QUERY = "select * from user where username='%s' and password='%s'";
+  private static final String SEARCH_QUERY = "select * from patient where surname='%s' collate nocase";
 
   private final Configuration fm = new Configuration(Configuration.VERSION_2_3_28);
+  private Connection database;
 
   @Override
   public void init() throws ServletException {
     configureTemplateEngine();
-    protectedDatabase.connectToDatabase();
+    connectToDatabase();
   }
 
   private void configureTemplateEngine() throws ServletException {
@@ -38,65 +45,87 @@ public class AppServlet extends HttpServlet {
       fm.setTemplateExceptionHandler(TemplateExceptionHandler.HTML_DEBUG_HANDLER);
       fm.setLogTemplateExceptions(false);
       fm.setWrapUncheckedExceptions(true);
-    } catch (IOException error) {
+    }
+    catch (IOException error) {
       throw new ServletException(error.getMessage());
     }
   }
 
-  private boolean isAuthenticated(String username, String password) {
-    String hashedPassword;
+  private void connectToDatabase() throws ServletException {
     try {
-      hashedPassword = PasswordHashing.hash(password);
-      return protectedDatabase.isAuthenticated(username, hashedPassword);
-    } catch (DigestException e) {
-      return false;
+      database = DriverManager.getConnection(CONNECTION_URL);
+    }
+    catch (SQLException error) {
+      throw new ServletException(error.getMessage());
     }
   }
 
   @Override
   protected void doGet(HttpServletRequest request, HttpServletResponse response)
-      throws ServletException, IOException {
+   throws ServletException, IOException {
     try {
       Template template = fm.getTemplate("login.html");
       template.process(null, response.getWriter());
       response.setContentType("text/html");
       response.setStatus(HttpServletResponse.SC_OK);
-    } catch (TemplateException error) {
+    }
+    catch (TemplateException error) {
       response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
     }
   }
 
   @Override
   protected void doPost(HttpServletRequest request, HttpServletResponse response)
-      throws ServletException, IOException {
-    // Get form parameters
+   throws ServletException, IOException {
+     // Get form parameters
     String username = request.getParameter("username");
     String password = request.getParameter("password");
     String surname = request.getParameter("surname");
 
     try {
-      if (bruteForceBlock.isAccountLocked(username)) {
-        Template template = fm.getTemplate("locked.html");
-        template.process(null, response.getWriter());
-        response.setContentType("text/html");
-        response.setStatus(HttpServletResponse.SC_OK);
-        return;
-      } else if (isAuthenticated(username, password)) {
-        bruteForceBlock.handleSuccessfulLogin(username);
+      if (authenticated(username, password)) {
         // Get search results and merge with template
         Map<String, Object> model = new HashMap<>();
-        model.put("records", protectedDatabase.searchResults(surname));
+        model.put("records", searchResults(surname));
         Template template = fm.getTemplate("details.html");
         template.process(model, response.getWriter());
-      } else {
-        bruteForceBlock.handleFailedLogin(username);
+      }
+      else {
         Template template = fm.getTemplate("invalid.html");
         template.process(null, response.getWriter());
       }
       response.setContentType("text/html");
       response.setStatus(HttpServletResponse.SC_OK);
-    } catch (Exception error) {
+    }
+    catch (Exception error) {
       response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
     }
+  }
+
+  private boolean authenticated(String username, String password) throws SQLException {
+    String query = String.format(AUTH_QUERY, username, password);
+    try (Statement stmt = database.createStatement()) {
+      ResultSet results = stmt.executeQuery(query);
+      return results.next();
+    }
+  }
+
+  private List<Record> searchResults(String surname) throws SQLException {
+    List<Record> records = new ArrayList<>();
+    String query = String.format(SEARCH_QUERY, surname);
+    try (Statement stmt = database.createStatement()) {
+      ResultSet results = stmt.executeQuery(query);
+      while (results.next()) {
+        Record rec = new Record();
+        rec.setSurname(results.getString(2));
+        rec.setForename(results.getString(3));
+        rec.setAddress(results.getString(4));
+        rec.setDateOfBirth(results.getString(5));
+        rec.setDoctorId(results.getString(6));
+        rec.setDiagnosis(results.getString(7));
+        records.add(rec);
+      }
+    }
+    return records;
   }
 }
